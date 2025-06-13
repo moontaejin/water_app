@@ -1,0 +1,155 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>제품 체크 앱</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#ffffff" />
+  <style>
+    body { font-family: sans-serif; background: #fafafa; padding: 1rem; }
+    h2 { text-align: center; }
+    input[type="file"] { margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; font-size: 14px; }
+    th { background: #333; color: white; }
+    tr.label-free { background-color: #e0ffe0; }
+    tr.normal { background-color: #f0f0f0; }
+    tr.completed { background-color: #c0e0f0 !important; }
+    button { margin: 1rem 0.25rem 0 0; padding: 0.4rem 1rem; }
+  </style>
+</head>
+<body>
+<h2>제품 체크 앱</h2>
+
+<input type="file" accept="image/*" onchange="processImage(event)">
+<br/>
+<button onclick="toggleCompleted()">✅ 완료 항목 접기/펼치기</button>
+<button onclick="resetAll()">🔄 전체 리셋</button>
+
+<table id="productTable">
+  <thead>
+    <tr><th>제품명</th><th>용량</th><th>수량</th><th>확인</th></tr>
+  </thead>
+  <tbody id="tableBody"></tbody>
+</table>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js"></script>
+<script>
+let showCompleted = true;
+
+function toggleCompleted() {
+  showCompleted = !showCompleted;
+  document.querySelectorAll("tr.completed").forEach(row => {
+    row.style.display = showCompleted ? "" : "none";
+  });
+}
+
+function parseVolume(str) {
+  const match = str.toLowerCase().match(/(\d+(\.\d+)?)(l|ml)/);
+  if (!match) return 0;
+  const num = parseFloat(match[1]);
+  return match[3] === "l" ? num * 1000 : num;
+}
+
+function markCompleted(checkbox) {
+  const row = checkbox.closest("tr");
+  if (checkbox.checked) {
+    row.classList.add("completed");
+    row.setAttribute("data-done", "1");
+  } else {
+    row.classList.remove("completed");
+    row.removeAttribute("data-done");
+  }
+  moveCompletedToBottom();
+  saveState();
+}
+
+function moveCompletedToBottom() {
+  const tbody = document.getElementById("tableBody");
+  const rows = Array.from(tbody.rows);
+  rows.sort((a, b) => {
+    const doneA = a.getAttribute("data-done") === "1";
+    const doneB = b.getAttribute("data-done") === "1";
+    return doneA - doneB;
+  });
+  rows.forEach(row => tbody.appendChild(row));
+}
+
+function saveState() {
+  const checked = [];
+  document.querySelectorAll("#tableBody tr").forEach((row, idx) => {
+    if (row.querySelector("input[type=checkbox]")?.checked) checked.push(idx);
+  });
+  localStorage.setItem("checkedRows", JSON.stringify(checked));
+}
+
+function restoreState() {
+  const checked = JSON.parse(localStorage.getItem("checkedRows") || "[]");
+  document.querySelectorAll("#tableBody tr").forEach((row, idx) => {
+    const checkbox = row.querySelector("input[type=checkbox]");
+    if (checkbox && checked.includes(idx)) {
+      checkbox.checked = true;
+      markCompleted(checkbox);
+    }
+  });
+}
+
+function resetAll() {
+  localStorage.clear();
+  document.getElementById("tableBody").innerHTML = "";
+  alert("모든 체크 및 리스트가 초기화되었습니다.");
+}
+
+function processOCRText(text) {
+  const lines = text.split(/\n|\r/).map(l => l.trim()).filter(l => l);
+  const rows = [];
+
+  lines.forEach(line => {
+    const match = line.match(/(.+?)\s+(\d+(\.\d+)?(L|ML|l|ml))\s+(\d+)/);
+    if (match) {
+      rows.push({
+        name: match[1],
+        volume: match[2],
+        count: match[5]
+      });
+    }
+  });
+
+  rows.sort((a, b) => parseVolume(b.volume) - parseVolume(a.volume));
+
+  const tbody = document.getElementById("tableBody");
+  tbody.innerHTML = "";
+
+  rows.forEach(item => {
+    const row = document.createElement("tr");
+    const isLabelFree = /(무라벨|eco|에코)/i.test(item.name);
+    row.className = isLabelFree ? "label-free" : "normal";
+    row.innerHTML = `
+      <td>${item.name}</td>
+      <td>${item.volume}</td>
+      <td>${item.count}</td>
+      <td><input type="checkbox" onchange="markCompleted(this)"></td>
+    `;
+    tbody.appendChild(row);
+  });
+
+  restoreState();
+}
+
+function processImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  Tesseract.recognize(
+    file,
+    'kor+eng',
+    { logger: m => console.log(m) }
+  ).then(({ data: { text } }) => {
+    processOCRText(text);
+  });
+}
+</script>
+</body>
+</html>
